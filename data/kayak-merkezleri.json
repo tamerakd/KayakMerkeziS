@@ -1,0 +1,20 @@
+{
+  "kayseri": {
+    "tesis": "Erciyes",
+    "skipass": "1200 TL",
+    "lat": 38.539,
+    "lon": 35.516
+  },
+  "erzurum": {
+    "tesis": "Palandöken",
+    "skipass": "1100 TL",
+    "lat": 39.851,
+    "lon": 41.281
+  },
+  "denizli": {
+    "tesis": "Nikfer (Bozdağ)",
+    "skipass": "850 TL",
+    "lat": 37.382,
+    "lon": 29.135
+  }
+}
