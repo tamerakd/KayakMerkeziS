@@ -1,18 +1,16 @@
-const API_KEY = "de49d9053cfc53fe23887484ae19baee"; // OpenWeatherMap API Key
+// OpenWeatherMap API Key
 const CACHE_TIME = 2 * 60 * 60 * 1000; // 2 saat (milisaniye cinsinden)
 
 let kayakMerkezleri = {};
-
-// HATA ÖNLEME: Kodunuzda kullanılan ama tanımlanmamış global değişkenler eklendi
 let mevcutYakinlasanSehir = null;
-const ORJINAL_VIEWBOX = "0 0 1000 600"; // Kendi SVG'nizin orijinal viewBox değerini buraya yazın
+const ORJINAL_VIEWBOX = "0 0 1007.478 527.323"; // SVG'nin tam viewBox değeri
 
-// HATA ÖNLEME: viewBoxAnimate fonksiyonu yoktu, temel bir versiyon eklendi
+// 0. Haritaya Zoom Yapan Fonksiyon
 function viewBoxAnimate(hedefViewBox) {
-    const harita = document.querySelector('svg'); // Haritanızın seçicisine göre güncelleyin
+    const harita = document.querySelector('svg');
     if (harita) {
         harita.setAttribute('viewBox', hedefViewBox);
-        harita.style.transition = "viewBox 0.5s ease-in-out"; // CSS transition eklenebilir
+        harita.style.transition = "viewBox 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)"; // Yumuşak kamera geçişi
     }
 }
 
@@ -58,7 +56,7 @@ async function havaDurumuGetir(sehirId, lat, lon) {
     }
 }
 
-// 3. Etkileşimler (Hover, Tıklama)
+// 3. Etkileşimler (Hover, Tıklama ve Üste Taşıma)
 function olayDinleyicileriniAyarla() {
     const aktifSehirler = document.querySelectorAll('.active-city');
     
@@ -73,24 +71,30 @@ function olayDinleyicileriniAyarla() {
     const panelSicaklik = document.getElementById('panel-sicaklik');
     const panelSkipass = document.getElementById('panel-skipass-fiyat');
 
-    // Fare hangi şehrin üzerinde tutuluyor kontrolü (Asenkron çakışmaları önlemek için)
+    // Fare hangi şehrin üzerinde tutuluyor kontrolü
     let aktifHoverSehirId = null;
 
     aktifSehirler.forEach(sehir => {
         
-        // --- DÜZELTME 1: VERİ ÇEKME İŞLEMİ MOUSEENTER'A ALINDI ---
-        sehir.addEventListener('mouseenter', async () => {
+        // --- FARE ŞEHRİN ÜZERİNE GELDİĞİNDE ---
+        sehir.addEventListener('mouseenter', async function () {
             if (mevcutYakinlasanSehir !== null) return; 
 
-            const sehirId = sehir.id;
-            aktifHoverSehirId = sehirId; // Hangi şehre girildiğini kaydet
+            // ÇOK ÖNEMLİ HİLE: Şehir zaten en üstte değilse, onu SVG'nin en sonuna (en üste) taşı.
+            // Bu sayede CSS animasyonu kesilmeden havaya kalkar ve diğer şehirlerin altında ezilmez.
+            if (this.parentNode.lastElementChild !== this) {
+                this.parentNode.appendChild(this);
+            }
+
+            const sehirId = this.id;
+            aktifHoverSehirId = sehirId;
             const tesis = kayakMerkezleri[sehirId];
 
             if (tesis) {
                 infoBox.classList.remove('hidden');
                 infoTesis.innerText = tesis.tesis;
                 infoSkipass.innerText = tesis.skipass;
-                infoSicaklik.innerText = "Yükleniyor..."; // Önceki şehrin verisi kalmasın
+                infoSicaklik.innerText = "Yükleniyor..."; 
                 
                 const sicaklik = await havaDurumuGetir(sehirId, tesis.lat, tesis.lon);
                 
@@ -101,29 +105,31 @@ function olayDinleyicileriniAyarla() {
             }
         });
 
-        // --- DÜZELTME 2: MOUSEMOVE SADECE KUTUNUN KONUMUNU GÜNCELLER ---
+        // --- FARE ŞEHRİN ÜZERİNDE HAREKET ETTİĞİNDE ---
         sehir.addEventListener('mousemove', (e) => {
             if (mevcutYakinlasanSehir !== null) return; 
             
+            // Tooltip fareyi takip eder
             infoBox.style.left = e.pageX + 15 + 'px';
             infoBox.style.top = e.pageY + 15 + 'px';
         });
 
-        // --- DURUM 2: FARE ŞEHİRDEN ÇIKTIĞINDA ---
+        // --- FARE ŞEHİRDEN ÇIKTIĞINDA ---
         sehir.addEventListener('mouseleave', () => {
-            aktifHoverSehirId = null; // Hover iptal edildi
+            aktifHoverSehirId = null; // Hover iptal
             infoBox.classList.add('hidden'); 
         });
 
-        // --- DURUM 3: ŞEHRE TIKLANDIĞINDA (ZOOM VE SABİT PANEL) ---
-        sehir.addEventListener('click', async (e) => {
+        // --- ŞEHRE TIKLANDIĞINDA (ZOOM VE PANEL) ---
+        sehir.addEventListener('click', async function (e) {
             e.stopPropagation(); 
             
-            const sehirId = sehir.id;
+            const sehirId = this.id;
             const tesis = kayakMerkezleri[sehirId];
 
             infoBox.classList.add('hidden');
 
+            // Eğer zaten bu şehre zoom yapılmışsa (İkinci kez tıklandığında) uzaklaş
             if (mevcutYakinlasanSehir === sehirId) {
                 viewBoxAnimate(ORJINAL_VIEWBOX);
                 mevcutYakinlasanSehir = null;
@@ -132,14 +138,14 @@ function olayDinleyicileriniAyarla() {
             }
 
             // Yakınlaşma (Zoom) İşlemi
-            const bbox = sehir.getBBox();
-            const padding = 30;
+            const bbox = this.getBBox();
+            const padding = 20; // Kameranın şehre ne kadar yaklaşacağı
             const hedefViewBox = `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding*2} ${bbox.height + padding*2}`;
             
             viewBoxAnimate(hedefViewBox);
             mevcutYakinlasanSehir = sehirId;
 
-            // Sol Üstteki Sabit Paneli Göster ve Doldur
+            // Sol Üstteki Sabit Paneli Göster
             if (tesis) {
                 panelBaslik.innerText = `${tesis.tesis} (${sehirId.charAt(0).toUpperCase() + sehirId.slice(1)})`;
                 panelSkipass.innerText = tesis.skipass;
@@ -156,7 +162,7 @@ function olayDinleyicileriniAyarla() {
         });
     });
 
-    // --- DURUM 4: HARİTADA BOŞLUĞA TIKLANDIĞINDA ---
+    // --- HARİTADA BOŞLUĞA (DENİZ/ARKAPLAN) TIKLANDIĞINDA ---
     document.addEventListener('click', () => {
         if (mevcutYakinlasanSehir !== null) {
             viewBoxAnimate(ORJINAL_VIEWBOX);
