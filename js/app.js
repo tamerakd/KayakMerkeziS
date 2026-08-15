@@ -1,67 +1,103 @@
-// OpenWeatherMap API Key
-const CACHE_TIME = 2 * 60 * 60 * 1000; // 2 saat (milisaniye cinsinden)
+const API_KEY = "de49d9053cfc53fe23887484ae19baee"; // OpenWeatherMap API Key
+const CACHE_TIME = 2 * 60 * 60 * 1000; // 2 saat
 
 let kayakMerkezleri = {};
 let mevcutYakinlasanSehir = null;
-const ORJINAL_VIEWBOX = "0 0 1007.478 527.323"; // SVG'nin tam viewBox değeri
+const ORJINAL_VIEWBOX = "0 0 1007.478 527.323"; 
 
-// 0. Haritaya Zoom Yapan Fonksiyon
-function viewBoxAnimate(hedefViewBox) {
-    const harita = document.querySelector('svg');
-    if (harita) {
-        harita.setAttribute('viewBox', hedefViewBox);
-        harita.style.transition = "viewBox 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)"; // Yumuşak kamera geçişi
+// --- YUMUŞAK VE AKICI VIEWBOX GEÇİŞİ (ANİMASYONLU) ---
+// --- CSS İLE YUMUŞAK VE AKICI ZOOM (GPU HIZLANDIRMALI) ---
+// --- SVG VIEWBOX İLE ANİMASYONLU, KESUNLİKLE PİKSELLEŞMEYEN ZOOM ---
+function viewBoxAnimate(hedefViewBoxStr) {
+    const svg = document.querySelector('svg');
+    if (!svg) return;
+
+    const mevcutViewBox = svg.getAttribute('viewBox').split(' ').map(Number);
+    const hedefViewBox = hedefViewBoxStr.split(' ').map(Number);
+
+    const baslangicZamani = performance.now();
+    const sure = 700; // 0.7 saniye (Hem akıcı hem hızlı)
+
+    function adim(suAnZaman) {
+        const gecenSure = suAnZaman - baslangicZamani;
+        const oran = Math.min(gecenSure / sure, 1);
+        
+        // Yumuşak hızlanma ve yavaşlama (Ease-out efekti)
+        const easeOrani = 1 - Math.pow(1 - oran, 3);
+
+        const anlikX = mevcutViewBox[0] + (hedefViewBox[0] - mevcutViewBox[0]) * easeOrani;
+        const anlikY = mevcutViewBox[1] + (hedefViewBox[1] - mevcutViewBox[1]) * easeOrani;
+        const anlikGenislik = mevcutViewBox[2] + (hedefViewBox[2] - mevcutViewBox[2]) * easeOrani;
+        const anlikYukseklik = mevcutViewBox[3] + (hedefViewBox[3] - mevcutViewBox[3]) * easeOrani;
+
+        svg.setAttribute('viewBox', `${anlikX} ${anlikY} ${anlikGenislik} ${anlikYukseklik}`);
+
+        if (oran < 1) {
+            requestAnimationFrame(adim);
+        }
     }
+
+    requestAnimationFrame(adim);
 }
 
-// 1. JSON verisini çek
+// 1. JSON verisini çek ve önceden yükle
 async function verileriYukle() {
     try {
         const response = await fetch('data/kayak-merkezleri.json');
         kayakMerkezleri = await response.json();
         olayDinleyicileriniAyarla();
+
+        for (const sehirId in kayakMerkezleri) {
+            const tesis = kayakMerkezleri[sehirId];
+            havaDurumuGetir(sehirId, tesis.lat, tesis.lon); 
+        }
     } catch (error) {
         console.error("Veriler yüklenirken hata oluştu:", error);
     }
 }
 
-// 2. 2 Saatlik Caching Mantığı ile Hava Durumu Çekme
+// 2. Hava Durumu Çekme
 async function havaDurumuGetir(sehirId, lat, lon) {
-    const cacheKey = `hava_${sehirId}`;
+    const cacheKey = `hava_detay_${sehirId}`;
     const cachedData = JSON.parse(localStorage.getItem(cacheKey));
     const suAn = new Date().getTime();
 
-    // Cache'de veri varsa ve 2 saat geçmemişse, API'ye gitme!
     if (cachedData && (suAn - cachedData.timestamp < CACHE_TIME)) {
-        return cachedData.temp;
+        return cachedData.veri; 
     }
 
-    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${API_KEY}`;
+    const url = `https://api.openweathermap.org/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&lang=tr&appid=${API_KEY}`;
     
     try {
         const response = await fetch(url);
         const data = await response.json();
-        const temp = data.main.temp;
 
-        // Gelen yeni veriyi saat damgasıyla Local Storage'a kaydet
+        const havaDetaylari = {
+            temp: Math.round(data.main.temp), 
+            feelsLike: Math.round(data.main.feels_like), 
+            desc: data.weather[0].description, 
+            wind: data.wind.speed, 
+            snow: data.snow ? data.snow["1h"] : 0 
+        };
+
         localStorage.setItem(cacheKey, JSON.stringify({
-            temp: temp,
+            veri: havaDetaylari,
             timestamp: suAn
         }));
 
-        return temp;
+        return havaDetaylari;
     } catch (error) {
         console.error("Hava durumu çekilemedi:", error);
-        return "Hata";
+        return null;
     }
 }
 
-// 3. Etkileşimler (Hover, Tıklama ve Üste Taşıma)
+// 3. Etkileşimler
 function olayDinleyicileriniAyarla() {
     const aktifSehirler = document.querySelectorAll('.active-city');
     
-    const infoBox = document.getElementById('info-box'); // Hareketli Kutu
-    const panel = document.getElementById('top-left-panel'); // Sabit Panel
+    const infoBox = document.getElementById('info-box');
+    const panel = document.getElementById('top-left-panel');
     
     const infoTesis = document.getElementById('info-tesis-adi');
     const infoSicaklik = document.getElementById('info-sicaklik');
@@ -70,18 +106,19 @@ function olayDinleyicileriniAyarla() {
     const panelBaslik = document.getElementById('panel-baslik');
     const panelSicaklik = document.getElementById('panel-sicaklik');
     const panelSkipass = document.getElementById('panel-skipass-fiyat');
+    const panelDurum = document.getElementById('panel-durum');
+    const panelRuzgar = document.getElementById('panel-ruzgar');
+    const panelKar = document.getElementById('panel-kar');
 
-    // Fare hangi şehrin üzerinde tutuluyor kontrolü
     let aktifHoverSehirId = null;
 
     aktifSehirler.forEach(sehir => {
         
-        // --- FARE ŞEHRİN ÜZERİNE GELDİĞİNDE ---
+        // --- MOUSEENTER ---
         sehir.addEventListener('mouseenter', async function () {
-            if (mevcutYakinlasanSehir !== null) return; 
+            // Zaten bir şehre yakınlaşılmışsa veya bu şehir kilitlendiyse (zoomed) hiçbir şey yapma
+            if (mevcutYakinlasanSehir !== null || this.classList.contains('zoomed')) return; 
 
-            // ÇOK ÖNEMLİ HİLE: Şehir zaten en üstte değilse, onu SVG'nin en sonuna (en üste) taşı.
-            // Bu sayede CSS animasyonu kesilmeden havaya kalkar ve diğer şehirlerin altında ezilmez.
             if (this.parentNode.lastElementChild !== this) {
                 this.parentNode.appendChild(this);
             }
@@ -92,35 +129,34 @@ function olayDinleyicileriniAyarla() {
 
             if (tesis) {
                 infoBox.classList.remove('hidden');
-                infoTesis.innerText = tesis.tesis;
-                infoSkipass.innerText = tesis.skipass;
-                infoSicaklik.innerText = "Yükleniyor..."; 
+                if(infoTesis) infoTesis.innerText = tesis.tesis;
+                if(infoSkipass) infoSkipass.innerText = tesis.skipass;
+                if(infoSicaklik) infoSicaklik.innerText = "Yükleniyor..."; 
                 
-                const sicaklik = await havaDurumuGetir(sehirId, tesis.lat, tesis.lon);
+                const hava = await havaDurumuGetir(sehirId, tesis.lat, tesis.lon);
                 
-                // Eğer veri gelene kadar kullanıcı başka şehre geçmediyse yazdır
-                if (aktifHoverSehirId === sehirId && !infoBox.classList.contains('hidden')) {
-                    infoSicaklik.innerText = `${sicaklik} °C`;
+                if (aktifHoverSehirId === sehirId && hava && !infoBox.classList.contains('hidden')) {
+                    if(infoSicaklik) infoSicaklik.innerText = `${hava.temp} °C`;
                 }
             }
         });
 
-        // --- FARE ŞEHRİN ÜZERİNDE HAREKET ETTİĞİNDE ---
+        // --- MOUSEMOVE ---
         sehir.addEventListener('mousemove', (e) => {
-            if (mevcutYakinlasanSehir !== null) return; 
-            
-            // Tooltip fareyi takip eder
+            if (mevcutYakinlasanSehir !== null || sehir.classList.contains('zoomed')) return; 
             infoBox.style.left = e.pageX + 15 + 'px';
             infoBox.style.top = e.pageY + 15 + 'px';
         });
 
-        // --- FARE ŞEHİRDEN ÇIKTIĞINDA ---
+        // --- MOUSELEAVE ---
         sehir.addEventListener('mouseleave', () => {
-            aktifHoverSehirId = null; // Hover iptal
+            aktifHoverSehirId = null;
             infoBox.classList.add('hidden'); 
         });
 
-        // --- ŞEHRE TIKLANDIĞINDA (ZOOM VE PANEL) ---
+        // --- CLICK (YAKINLAŞMA) ---
+        // --- ŞEHRE TIKLANDIĞINDA ---
+        // --- ŞEHRE TIKLANDIĞINDA ---
         sehir.addEventListener('click', async function (e) {
             e.stopPropagation(); 
             
@@ -129,48 +165,59 @@ function olayDinleyicileriniAyarla() {
 
             infoBox.classList.add('hidden');
 
-            // Eğer zaten bu şehre zoom yapılmışsa (İkinci kez tıklandığında) uzaklaş
             if (mevcutYakinlasanSehir === sehirId) {
                 viewBoxAnimate(ORJINAL_VIEWBOX);
                 mevcutYakinlasanSehir = null;
                 panel.classList.add('hidden'); 
+                document.querySelectorAll('.active-city').forEach(c => c.classList.remove('zoomed'));
                 return;
             }
 
-            // Yakınlaşma (Zoom) İşlemi
+            // --- NET VIEWBOX HESAPLAMA ---
             const bbox = this.getBBox();
-            const padding = 20; // Kameranın şehre ne kadar yaklaşacağı
+            const padding = 25; // Kenarlardan bırakılacak boşluk payı
             const hedefViewBox = `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding*2} ${bbox.height + padding*2}`;
             
             viewBoxAnimate(hedefViewBox);
+            // -----------------------------
+
             mevcutYakinlasanSehir = sehirId;
 
-            // Sol Üstteki Sabit Paneli Göster
+            document.querySelectorAll('.active-city').forEach(c => c.classList.add('zoomed'));
+
             if (tesis) {
-                panelBaslik.innerText = `${tesis.tesis} (${sehirId.charAt(0).toUpperCase() + sehirId.slice(1)})`;
-                panelSkipass.innerText = tesis.skipass;
-                panelSicaklik.innerText = "Yükleniyor...";
+                if(panelBaslik) panelBaslik.innerText = `${tesis.tesis} (${sehirId.charAt(0).toUpperCase() + sehirId.slice(1)})`;
+                if(panelSkipass) panelSkipass.innerText = tesis.skipass;
+                
+                if(panelSicaklik) panelSicaklik.innerText = "Yükleniyor...";
+                if(panelDurum) panelDurum.innerText = "Yükleniyor...";
+                if(panelRuzgar) panelRuzgar.innerText = "Yükleniyor...";
+                if(panelKar) panelKar.innerText = "Yükleniyor...";
                 
                 panel.classList.remove('hidden');
 
-                const sicaklik = await havaDurumuGetir(sehirId, tesis.lat, tesis.lon);
+                const hava = await havaDurumuGetir(sehirId, tesis.lat, tesis.lon);
                 
-                if (mevcutYakinlasanSehir === sehirId) {
-                    panelSicaklik.innerText = `${sicaklik} °C`;
+                if (mevcutYakinlasanSehir === sehirId && hava) {
+                    if(panelSicaklik) panelSicaklik.innerText = `${hava.temp} °C (Hissedilen: ${hava.feelsLike} °C)`;
+                    if(panelDurum) panelDurum.innerText = hava.desc.charAt(0).toUpperCase() + hava.desc.slice(1);
+                    if(panelRuzgar) panelRuzgar.innerText = `${hava.wind} m/s`;
+                    if(panelKar) panelKar.innerText = hava.snow > 0 ? `${hava.snow} mm` : "Yağış Yok";
                 }
             }
         });
     });
 
-    // --- HARİTADA BOŞLUĞA (DENİZ/ARKAPLAN) TIKLANDIĞINDA ---
+    // --- BOŞLUĞA TIKLANDIĞINDA ---
+    // --- HARİTADA BOŞLUĞA TIKLANDIĞINDA ---
     document.addEventListener('click', () => {
         if (mevcutYakinlasanSehir !== null) {
             viewBoxAnimate(ORJINAL_VIEWBOX);
             mevcutYakinlasanSehir = null;
             panel.classList.add('hidden');
+            document.querySelectorAll('.active-city').forEach(c => c.classList.remove('zoomed'));
         }
     });
 }
 
-// Uygulamayı başlat
 verileriYukle();
